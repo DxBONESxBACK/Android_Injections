@@ -1,0 +1,110 @@
+import android.content.Context
+import android.hardware.camera2.CameraManager
+import android.util.Log
+
+/**
+ * A utility class for controlling the device's main LED (Camera Flash/Torch).
+ *
+ * NOTE: This requires the 'android.permission.CAMERA' permission to be declared
+ * in the AndroidManifest.xml and granted at runtime (for API 23+).
+ *
+ * To use this utility, ensure you have these permissions in your AndroidManifest.xml:
+ * <uses-permission android:name="android.permission.CAMERA" />
+ * <uses-feature android:name="android.hardware.camera.flash" android:required="false" />
+ */
+class LedControlUtility(private val context: Context) {
+
+    private val TAG = "LedControlUtility"
+    private val cameraManager: CameraManager? =
+        context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager
+
+    private var cameraId: String? = null
+    private var isTorchOn: Boolean = false
+
+    init {
+        // Attempt to find the default camera ID that supports torch mode.
+        try {
+            // Get the ID of the default camera (usually the back camera)
+            cameraId = cameraManager?.cameraIdList?.firstOrNull()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to initialize CameraManager or find camera ID: ${e.message}")
+            cameraId = null
+        }
+    }
+
+    /**
+     * Toggles the state of the LED flash (torch mode) on the device.
+     * @return The new state of the LED (true if on, false if off).
+     */
+    fun toggleLed(): Boolean {
+        if (cameraId == null) {
+            Log.e(TAG, "No usable camera ID found or CameraManager not available.")
+            return false
+        }
+
+        return if (isTorchOn) {
+            setLedState(false)
+        } else {
+            setLedState(true)
+        }
+    }
+
+    /**
+     * Explicitly sets the LED flash state.
+     * @param enable true to turn the LED on, false to turn it off.
+     * @return The resulting state of the LED (true if on, false if off).
+     */
+    fun setLedState(enable: Boolean): Boolean {
+        if (cameraId == null) {
+            Log.e(TAG, "No usable camera ID found or CameraManager not available.")
+            return false
+        }
+
+        try {
+            // setTorchMode(cameraId, true) turns it on, false turns it off.
+            cameraManager?.setTorchMode(cameraId!!, enable)
+            isTorchOn = enable
+            Log.i(TAG, "LED state set to: $isTorchOn")
+            return isTorchOn
+        } catch (e: Exception) {
+            Log.e(TAG, "Error setting torch mode: ${e.message}")
+            // Handle specific exceptions like CameraAccessException if needed.
+            isTorchOn = false // Assume failure means it's off
+            return false
+        }
+    }
+
+    /**
+     * Gets the current known state of the LED.
+     */
+    fun getLedState(): Boolean = isTorchOn
+}
+
+// --- Example of how to use this in an Activity or Fragment (for context) ---
+/*
+class MyActivity : AppCompatActivity() {
+    private lateinit var ledUtility: LedControlUtility
+    // (1) Request CAMERA permission in onCreate() if API >= 23
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        // ...
+        ledUtility = LedControlUtility(applicationContext)
+
+        // Example button click listener:
+        val toggleButton: Button = findViewById(R.id.led_toggle_button)
+        toggleButton.setOnClickListener {
+            val newState = ledUtility.toggleLed()
+            Log.d("UI_Action", "LED is now: $newState")
+        }
+    }
+
+    // (2) Ensure you turn off the LED when the application is stopped
+    override fun onPause() {
+        super.onPause()
+        if (ledUtility.getLedState()) {
+            ledUtility.setLedState(false)
+        }
+    }
+}
+*/
