@@ -1,0 +1,98 @@
+# led_controller.py
+# Must be executed as root (UID 0) via Magisk's service.sh hook.
+
+import os
+import time
+import sys
+
+# --- Configuration ---
+# NOTE: This path is highly device-dependent and may require discovery (see Section VI.A)
+TARGET_LED_NAME = "charging"
+SYSFS_LED_BASE = f"/sys/class/leds/{TARGET_LED_NAME}"
+BRIGHTNESS_FILE = os.path.join(SYSFS_LED_BASE, "brightness")
+TRIGGER_FILE = os.path.join(SYSFS_LED_BASE, "trigger")
+CHARGING_STATUS_PATH = "/sys/class/power_supply/battery/status"
+POLL_INTERVAL_SECONDS = 8
+
+class SysFSLedController:
+    """Manages low-level SysFS interaction for the LED."""
+
+    def __init__(self):
+        if not os.path.exists(SYSFS_LED_BASE):
+            print(f"ERROR: LED path not found: {SYSFS_LED_BASE}", file=sys.stderr)
+            sys.exit(1)
+        
+        # Verify root privilege is critical before proceeding
+        if os.geteuid()!= 0:
+            print("ERROR: Script must run as root (UID 0). Current UID:", os.geteuid(), file=sys.stderr)
+            sys.exit(1) # 
+
+        self.MAX_BRIGHTNESS = self._read_sysfs(os.path.join(SYSFS_LED_BASE, "max_brightness"), default=1)
+        self.ON_VALUE = str(self.MAX_BRIGHTNESS)
+        self.OFF_VALUE = "0"
+
+        print(f"INFO: Initialized controller for {TARGET_LED_NAME}. Max brightness: {self.MAX_BRIGHTNESS}")
+        self.disable_trigger()
+
+    def _read_sysfs(self, path, default=None):
+        """Safely reads a string from a SysFS file."""
+        try:
+            with open(path, 'r') as f:
+                return f.read().strip()
+        except Exception as e:
+            print(f"WARNING: Could not read {path}: {e}", file=sys.stderr)
+            return default
+
+    def _safe_write(self, path, value):
+        """Safely writes a string value to a SysFS file and explicitly flushes."""
+        try:
+            with open(path, 'w') as f:
+                f.write(value)
+                f.flush() # Ensures immediate kernel commitment 
+            return True
+        except PermissionError: # [12]
+            print(f"ERROR: Permission denied writing to {path}. Check root access/SELinux.", file=sys.stderr)
+            return False
+        except FileNotFoundError:
+            print(f"ERROR: SysFS node not found at {path}.", file=sys.stderr)
+            return False
+        except Exception as e:
+            print(f"ERROR: Failed to write to {path}: {e}", file=sys.stderr)
+            return False
+
+    def disable_trigger(self):
+        """Sets the LED trigger to 'none' to assert userspace control."""
+        print("INFO: Attempting to disable kernel trigger.")
+        self._safe_write(TRIGGER_FILE, "none") # 
+
+    def set_brightness(self, is_on):
+        """Toggles the LED brightness."""
+        value = self.ON_VALUE if is_on else self.OFF_VALUE
+        self._safe_write(BRIGHTNESS_FILE, value)
+
+    def get_charging_status(self):
+        """Polls the power_supply SysFS node for charging status."""
+        status = self._read_sysfs(CHARGING_STATUS_PATH, default="Unknown")
+        # Common status values include: Charging, Full, Not Charging, Discharging
+        return status in ["Charging", "Full"]
+
+def main_loop():
+    """Main daemon loop for continuous LED control."""
+    controller = SysFSLedController()
+    
+    print("INFO: Starting LED control loop...")
+    
+    while True:
+        is_charging = controller.get_charging_status()
+        
+        if is_charging:
+            controller.set_brightness(True)
+            print("STATUS: Charging detected. LED ON.")
+        else:
+            controller.set_brightness(False)
+            print("STATUS: Not charging. LED OFF.")
+            
+        time.sleep(POLL_INTERVAL_SECONDS) # 
+
+if __name__ == "__main__":
+    main_loop()
